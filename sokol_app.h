@@ -328,6 +328,7 @@ typedef enum {
     SAPP_EVENTTYPE_TOUCHES_MOVED,
     SAPP_EVENTTYPE_TOUCHES_ENDED,
     SAPP_EVENTTYPE_TOUCHES_CANCELLED,
+	SAPP_EVENTTYPE_WINDOW_RESIZE,
     _SAPP_EVENTTYPE_NUM,
     _SAPP_EVENTTYPE_FORCE_U32 = 0x7FFFFFF
 } sapp_event_type;
@@ -2917,6 +2918,8 @@ _SOKOL_PRIVATE void _sapp_win32_char_event(uint32_t c) {
     }
 }
 
+_SOKOL_PRIVATE void _sapp_win32_window_pos_event(const WINDOWPOS* pwp); //declared bellow
+
 _SOKOL_PRIVATE LRESULT CALLBACK _sapp_win32_wndproc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
     switch (uMsg) {
         case WM_CLOSE:
@@ -2973,6 +2976,11 @@ _SOKOL_PRIVATE LRESULT CALLBACK _sapp_win32_wndproc(HWND hWnd, UINT uMsg, WPARAM
         case WM_KEYUP:
             _sapp_win32_key_event(SAPP_EVENTTYPE_KEY_UP, (int)(HIWORD(lParam)&0x1FF));
             break;
+        case WM_WINDOWPOSCHANGED:
+            //WINDOWPOSCHANGED may be used instead of WM_SIZE, WM_MOVE and WM_SHOWWINDOW
+            //More info: https://blogs.msdn.microsoft.com/oldnewthing/20080115-00/?p=23813
+            _sapp_win32_window_pos_event((WINDOWPOS*)lParam);
+             break;  
         default:
             break;
     }
@@ -3131,7 +3139,7 @@ _SOKOL_PRIVATE void _sapp_d3d11_create_device_and_swapchain(void) {
     SOKOL_ASSERT(SUCCEEDED(hr) && _sapp_dxgi_swap_chain && _sapp_d3d11_device && _sapp_d3d11_device_context);
 }
 
-_SOKOL_PRIVATE _sapp_d3d11_destroy_device_and_swapchain(void) {
+_SOKOL_PRIVATE void _sapp_d3d11_destroy_device_and_swapchain(void) {
     _SAPP_SAFE_RELEASE(IDXGISwapChain, _sapp_dxgi_swap_chain);
     _SAPP_SAFE_RELEASE(ID3D11DeviceContext, _sapp_d3d11_device_context);
     _SAPP_SAFE_RELEASE(ID3D11Device, _sapp_d3d11_device);
@@ -3176,6 +3184,49 @@ _SOKOL_PRIVATE void _sapp_d3d11_resize_default_render_target(void) {
         IDXGISwapChain_ResizeBuffers(_sapp_dxgi_swap_chain, 1, _sapp.framebuffer_width, _sapp.framebuffer_height, DXGI_FORMAT_R8G8B8A8_UNORM, 0);
         _sapp_d3d11_create_default_render_target();
     }
+}
+
+_SOKOL_PRIVATE void _sapp_win32_window_pos_event(const WINDOWPOS* pwp) {
+	if (_sapp_events_enabled()) {
+		if (!(pwp->flags & SWP_NOSIZE)) {
+			/* handle window resizing */
+			// Note: WINDOWPOS provides window size including borders, so it may not exactly what we need
+
+			_sapp_init_event(SAPP_EVENTTYPE_WINDOW_RESIZE);
+			_sapp.event.modifiers = _sapp_win32_mods();
+
+			RECT rect;
+			if (GetClientRect(pwp->hwnd, &rect)) {
+				_sapp.window_width = (rect.right - rect.left) / _sapp_win32_window_scale;
+				_sapp.window_height = (rect.bottom - rect.top) / _sapp_win32_window_scale;
+				_sapp.framebuffer_width = _sapp.window_width * _sapp_win32_content_scale;
+				_sapp.framebuffer_height = _sapp.window_height * _sapp_win32_content_scale;
+#if defined(SOKOL_D3D11)
+				_sapp_d3d11_resize_default_render_target();
+#endif
+			}
+
+			//Question: is it ok to redraw scene here?
+			_sapp_frame();
+#if defined(SOKOL_D3D11)
+			IDXGISwapChain_Present(_sapp_dxgi_swap_chain, _sapp.swap_interval, 0);
+#endif
+#if defined(SOKOL_GLCORE33)
+			_sapp_wgl_swap_buffers();
+#endif
+			_sapp.desc.event_cb(&_sapp.event);
+		}
+		// other options:
+		if (pwp->flags & SWP_SHOWWINDOW) {
+			//dispatch SAPP_EVENTTYPE_WINDOW_SHOW?
+		}
+		if (pwp->flags & SWP_HIDEWINDOW) {
+			//dispatch SAPP_EVENTTYPE_WINDOW_HIDE?
+		}
+		if (!(pwp->flags & SWP_NOMOVE)) {
+			//dispatch SAPP_EVENTTYPE_WINDOW_MOVE?
+		}
+	}
 }
 #endif
 
